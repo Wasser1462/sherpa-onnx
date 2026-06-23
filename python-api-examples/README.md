@@ -31,6 +31,9 @@
 - [supertonic-tts.py](./supertonic-tts.py) It shows how to use SupertonicTTS
   with the `GenerationConfig` API.
 
+- [moss-tts.py](./moss-tts.py) It shows how to use MOSS TTS with the
+  `GenerationConfig` API.
+
 - [zipvoice-tts.py](./zipvoice-tts.py) It shows how to use ZipVoice for
   zero-shot TTS with the `GenerationConfig` API.
 

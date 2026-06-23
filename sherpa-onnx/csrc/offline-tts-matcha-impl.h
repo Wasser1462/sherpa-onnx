@@ -56,55 +56,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     }
 
     InitFrontend();
-
-    if (!config.rule_fsts.empty()) {
-      std::vector<std::string> files;
-      SplitStringToVector(config.rule_fsts, ",", false, &files);
-      tn_list_.reserve(files.size());
-      for (const auto &f : files) {
-        if (config.model.debug) {
-#if __OHOS__
-          SHERPA_ONNX_LOGE("rule fst: %{public}s", f.c_str());
-#else
-          SHERPA_ONNX_LOGE("rule fst: %s", f.c_str());
-#endif
-        }
-        tn_list_.push_back(std::make_unique<kaldifst::TextNormalizer>(f));
-      }
-    }
-
-    if (!config.rule_fars.empty()) {
-      if (config.model.debug) {
-        SHERPA_ONNX_LOGE("Loading FST archives");
-      }
-      std::vector<std::string> files;
-      SplitStringToVector(config.rule_fars, ",", false, &files);
-
-      tn_list_.reserve(files.size() + tn_list_.size());
-
-      for (const auto &f : files) {
-        if (config.model.debug) {
-#if __OHOS__
-          SHERPA_ONNX_LOGE("rule far: %{public}s", f.c_str());
-#else
-          SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
-#endif
-        }
-        std::unique_ptr<fst::FarReader<fst::StdArc>> reader(
-            fst::FarReader<fst::StdArc>::Open(f));
-        for (; !reader->Done(); reader->Next()) {
-          std::unique_ptr<fst::StdConstFst> r(
-              fst::CastOrConvertToConstFst(reader->GetFst()->Copy()));
-
-          tn_list_.push_back(
-              std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
-        }
-      }
-
-      if (config.model.debug) {
-        SHERPA_ONNX_LOGE("FST archives loaded!");
-      }
-    }
+    InitTextNormalizer(config, &tn_list_);
 
     if (meta_data.sample_rate == 16000 && meta_data.is_zh_en == 1) {
       if (!Contains(config.model.matcha.vocoder, "16") &&
@@ -138,48 +90,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
     }
 
     InitFrontend(mgr);
-
-    if (!config.rule_fsts.empty()) {
-      std::vector<std::string> files;
-      SplitStringToVector(config.rule_fsts, ",", false, &files);
-      tn_list_.reserve(files.size());
-      for (const auto &f : files) {
-        if (config.model.debug) {
-#if __OHOS__
-          SHERPA_ONNX_LOGE("rule fst: %{public}s", f.c_str());
-#else
-          SHERPA_ONNX_LOGE("rule fst: %s", f.c_str());
-#endif
-        }
-        auto buf = ReadFile(mgr, f);
-        std::istringstream is(std::string(buf.data(), buf.size()));
-        tn_list_.push_back(std::make_unique<kaldifst::TextNormalizer>(is));
-      }
-    }
-
-    if (!config.rule_fars.empty()) {
-      std::vector<std::string> files;
-      SplitStringToVector(config.rule_fars, ",", false, &files);
-      tn_list_.reserve(files.size() + tn_list_.size());
-
-      for (const auto &f : files) {
-        if (config.model.debug) {
-#if __OHOS__
-          SHERPA_ONNX_LOGE("rule far: %{public}s", f.c_str());
-#else
-          SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
-#endif
-        }
-
-        auto buf = ReadFile(mgr, f);
-
-        auto fsts = ReadFstsFromFar(buf);
-        for (auto &r : fsts) {
-          tn_list_.push_back(
-              std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
-        }
-      }  // for (const auto &f : files)
-    }  // if (!config.rule_fars.empty())
+    InitTextNormalizer(mgr, config, &tn_list_);
 
     if (meta_data.sample_rate == 16000 && meta_data.is_zh_en == 1) {
       if (!Contains(config.model.matcha.vocoder, "16") &&
@@ -265,18 +176,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
 #endif
     }
 
-    if (!tn_list_.empty()) {
-      for (const auto &tn : tn_list_) {
-        text = tn->Normalize(text);
-        if (config_.model.debug) {
-#if __OHOS__
-          SHERPA_ONNX_LOGE("After normalizing: %{public}s", text.c_str());
-#else
-          SHERPA_ONNX_LOGE("After normalizing: %s", text.c_str());
-#endif
-        }
-      }
-    }
+    text = ApplyTextNormalizer(std::move(text), tn_list_, config_.model.debug);
 
     std::vector<TokenIDs> token_ids =
         frontend_->ConvertTextToTokenIds(text, meta_data.voice);
@@ -445,8 +345,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
   }
 
   GeneratedAudio Process(const std::vector<std::vector<int64_t>> &tokens,
-                         int32_t sid, float speed,
-                         float silence_scale) const {
+                         int32_t sid, float speed, float silence_scale) const {
     int32_t num_tokens = 0;
     for (const auto &k : tokens) {
       num_tokens += k.size();
@@ -505,7 +404,7 @@ class OfflineTtsMatchaImpl : public OfflineTtsImpl {
   OfflineTtsConfig config_;
   std::unique_ptr<OfflineTtsMatchaModel> model_;
   std::unique_ptr<Vocoder> vocoder_;
-  std::vector<std::unique_ptr<kaldifst::TextNormalizer>> tn_list_;
+  TextNormalizerList tn_list_;
   std::unique_ptr<OfflineTtsFrontend> frontend_;
 };
 

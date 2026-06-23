@@ -1574,6 +1574,22 @@ static sherpa_onnx::OfflineTtsConfig GetOfflineTtsConfig(
   tts_config.model.supertonic.voice_style =
       SHERPA_ONNX_OR(config->model.supertonic.voice_style, "");
 
+  // moss
+  tts_config.model.moss.prefill =
+      SHERPA_ONNX_OR(config->model.moss.prefill, "");
+  tts_config.model.moss.decode_step =
+      SHERPA_ONNX_OR(config->model.moss.decode_step, "");
+  tts_config.model.moss.local_fixed_sampled_frame =
+      SHERPA_ONNX_OR(config->model.moss.local_fixed_sampled_frame, "");
+  tts_config.model.moss.codec_encoder =
+      SHERPA_ONNX_OR(config->model.moss.codec_encoder, "");
+  tts_config.model.moss.codec_decoder =
+      SHERPA_ONNX_OR(config->model.moss.codec_decoder, "");
+  tts_config.model.moss.tokenizer_vocab =
+      SHERPA_ONNX_OR(config->model.moss.tokenizer_vocab, "");
+  tts_config.model.moss.tokenizer_scores =
+      SHERPA_ONNX_OR(config->model.moss.tokenizer_scores, "");
+
   tts_config.model.num_threads = SHERPA_ONNX_OR(config->model.num_threads, 1);
   tts_config.model.debug = config->model.debug;
   tts_config.model.provider = SHERPA_ONNX_OR(config->model.provider, "cpu");

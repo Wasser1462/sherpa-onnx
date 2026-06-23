@@ -8,8 +8,8 @@
 #include <string>
 #include <utility>
 
-#include "sherpa-onnx/csrc/offline-tts.h"
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/offline-tts.h"
 #include "sherpa-onnx/csrc/parse-options.h"
 #include "sherpa-onnx/csrc/wave-reader.h"
 #include "sherpa-onnx/csrc/wave-writer.h"
@@ -70,6 +70,23 @@ tar xf sherpa-onnx-supertonic-tts-int8-2026-03-06.tar.bz2
  --output-filename=./generated-supertonic.wav \
  "Hello from Supertonic TTS"
 
+MOSS TTS:
+
+./scripts/moss-tts-nano/run.sh
+
+./bin/sherpa-onnx-offline-tts \
+ --moss-prefill=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/moss_tts_prefill.onnx \
+ --moss-decode-step=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/moss_tts_decode_step.onnx \
+ --moss-local-fixed-sampled-frame=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/moss_tts_local_fixed_sampled_frame.onnx \
+ --moss-codec-encoder=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/moss_audio_tokenizer_encode.onnx \
+ --moss-codec-decoder=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/moss_audio_tokenizer_decode_full.onnx \
+ --moss-tokenizer-vocab=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/tokenizer_vocab.json \
+ --moss-tokenizer-scores=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/tokenizer_scores.json \
+ --prompt-audio-path=./scripts/moss-tts-nano/sherpa-onnx-moss-tts-nano-2026-05-07/prompt_wavs/zh_1.wav \
+ --tts-rule-fsts=./matcha-icefall-zh-baker/phone.fst,./matcha-icefall-zh-baker/date.fst,./matcha-icefall-zh-baker/number.fst \
+ --output-filename=./generated-moss.wav \
+ "Hello from MOSS TTS"
+
 ZipVoice TTS:
 
 wget https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2
@@ -104,9 +121,15 @@ or details.
   int32_t sid = 0;
 
   std::string reference_audio;
+  std::string prompt_audio_path;
   po.Register(
       "reference-audio", &reference_audio,
-      "Path to reference audio. Required by Pocket TTS and ZipVoice TTS.");
+      "Path to reference audio. Required by Pocket TTS and ZipVoice TTS. "
+      "Optional for MOSS TTS voice cloning.");
+  po.Register(
+      "prompt-audio-path", &prompt_audio_path,
+      "Alias of --reference-audio for MOSS TTS voice cloning, matching the "
+      "official MOSS ONNX inference script.");
 
   std::string reference_text;
   po.Register(
@@ -116,6 +139,11 @@ or details.
   sherpa_onnx::GenerationConfig gen_config;
 
   std::string lang;
+  int32_t moss_max_new_frames = 375;
+  float moss_max_reference_audio_len = -1.0f;
+  int32_t moss_max_char_in_sentence = 200;
+  int32_t moss_min_char_in_sentence = 30;
+  int32_t moss_seed = -1;
 
   po.Register(
       "num-steps", &gen_config.num_steps,
@@ -133,6 +161,22 @@ or details.
               "Speaker ID. Used only for multi-speaker models, e.g., models "
               "trained using the VCTK dataset. Not used for single-speaker "
               "models, e.g., models trained using the LJSpeech dataset");
+
+  po.Register("moss-max-new-frames", &moss_max_new_frames,
+              "Maximum number of new codec frames to generate for MOSS TTS");
+
+  po.Register("moss-max-reference-audio-len", &moss_max_reference_audio_len,
+              "Maximum reference audio length in seconds for MOSS TTS. "
+              "A non-positive value means using the full reference audio");
+
+  po.Register("moss-max-char-in-sentence", &moss_max_char_in_sentence,
+              "Maximum characters per MOSS TTS text chunk");
+
+  po.Register("moss-min-char-in-sentence", &moss_min_char_in_sentence,
+              "Minimum characters to merge into a MOSS TTS text chunk");
+
+  po.Register("moss-seed", &moss_seed,
+              "Random seed for MOSS TTS. -1 means random");
 
   po.Register("speed", &gen_config.speed,
               "Speech speed. Larger=faster. Used by Supertonic, VITS, etc. "
@@ -175,6 +219,7 @@ or details.
   bool is_supertonic_tts = !config.model.supertonic.tts_json.empty();
   bool is_zipvoice_tts = !config.model.zipvoice.encoder.empty() &&
                          !config.model.zipvoice.decoder.empty();
+  bool is_moss_tts = !config.model.moss.prefill.empty();
 
   gen_config.sid = sid;
 
@@ -182,7 +227,23 @@ or details.
     gen_config.extra["lang"] = lang;
   }
 
-  if (is_pocket_tts || is_zipvoice_tts) {
+  if (is_moss_tts) {
+    gen_config.extra["max_new_frames"] = std::to_string(moss_max_new_frames);
+    gen_config.extra["max_reference_audio_len"] =
+        std::to_string(moss_max_reference_audio_len);
+    gen_config.extra["max_char_in_sentence"] =
+        std::to_string(moss_max_char_in_sentence);
+    gen_config.extra["min_char_in_sentence"] =
+        std::to_string(moss_min_char_in_sentence);
+    gen_config.extra["seed"] = std::to_string(moss_seed);
+  }
+
+  if (is_moss_tts && reference_audio.empty() && !prompt_audio_path.empty()) {
+    reference_audio = prompt_audio_path;
+  }
+
+  if (is_pocket_tts || is_zipvoice_tts ||
+      (is_moss_tts && !reference_audio.empty())) {
     if (reference_audio.empty()) {
       fprintf(stderr,
               "You need to provide --reference-audio for this TTS model");
@@ -191,8 +252,7 @@ or details.
 
     int32_t sample_rate;
     bool is_ok = false;
-    auto samples =
-        sherpa_onnx::ReadWave(reference_audio, &sample_rate, &is_ok);
+    auto samples = sherpa_onnx::ReadWave(reference_audio, &sample_rate, &is_ok);
     if (!is_ok) {
       fprintf(stderr, "Failed to read '%s'", reference_audio.c_str());
       SHERPA_ONNX_EXIT(EXIT_FAILURE);
@@ -204,8 +264,7 @@ or details.
 
   if (is_zipvoice_tts) {
     if (reference_text.empty()) {
-      fprintf(stderr,
-              "You need to provide --reference-text for ZipVoice TTS");
+      fprintf(stderr, "You need to provide --reference-text for ZipVoice TTS");
       SHERPA_ONNX_EXIT(EXIT_FAILURE);
     }
     gen_config.reference_text = reference_text;

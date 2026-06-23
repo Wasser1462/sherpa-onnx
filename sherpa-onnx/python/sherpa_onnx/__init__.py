@@ -53,6 +53,7 @@ from sherpa_onnx.lib._sherpa_onnx import (
     OfflineTtsKokoroModelConfig,
     OfflineTtsMatchaModelConfig,
     OfflineTtsModelConfig,
+    OfflineTtsMossModelConfig,
     OfflineTtsPocketModelConfig,
     OfflineTtsSupertonicModelConfig,
     OfflineTtsVitsModelConfig,

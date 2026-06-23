@@ -20,6 +20,7 @@ static_assert(sizeof(SherpaOnnxOfflineTtsKittenModelConfig) == 5 * 4, "");
 static_assert(sizeof(SherpaOnnxOfflineTtsZipvoiceModelConfig) == 10 * 4, "");
 static_assert(sizeof(SherpaOnnxOfflineTtsPocketModelConfig) == 8 * 4, "");
 static_assert(sizeof(SherpaOnnxOfflineTtsSupertonicModelConfig) == 7 * 4, "");
+static_assert(sizeof(SherpaOnnxOfflineTtsMossModelConfig) == 7 * 4, "");
 static_assert(sizeof(SherpaOnnxOfflineTtsModelConfig) ==
                   sizeof(SherpaOnnxOfflineTtsVitsModelConfig) +
                       sizeof(SherpaOnnxOfflineTtsMatchaModelConfig) +
@@ -27,7 +28,8 @@ static_assert(sizeof(SherpaOnnxOfflineTtsModelConfig) ==
                       sizeof(SherpaOnnxOfflineTtsKittenModelConfig) +
                       sizeof(SherpaOnnxOfflineTtsZipvoiceModelConfig) +
                       sizeof(SherpaOnnxOfflineTtsPocketModelConfig) +
-                      sizeof(SherpaOnnxOfflineTtsSupertonicModelConfig),
+                      sizeof(SherpaOnnxOfflineTtsSupertonicModelConfig) +
+                      sizeof(SherpaOnnxOfflineTtsMossModelConfig),
               "");
 
 static_assert(sizeof(SherpaOnnxOfflineTtsConfig) ==

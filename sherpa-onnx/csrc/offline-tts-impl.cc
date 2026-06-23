@@ -5,7 +5,11 @@
 #include "sherpa-onnx/csrc/offline-tts-impl.h"
 
 #include <memory>
+#include <string>
 #include <vector>
+
+#include "fst/extensions/far/far.h"
+#include "kaldifst/csrc/kaldi-fst-io.h"
 
 #if __ANDROID_API__ >= 9
 #include "android/asset_manager.h"
@@ -19,6 +23,7 @@
 #include "sherpa-onnx/csrc/offline-tts-kitten-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-kokoro-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-matcha-impl.h"
+#include "sherpa-onnx/csrc/offline-tts-moss-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-pocket-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-supertonic-impl.h"
 #include "sherpa-onnx/csrc/offline-tts-vits-impl.h"
@@ -38,6 +43,72 @@ std::vector<int64_t> OfflineTtsImpl::AddBlank(const std::vector<int64_t> &x,
   return buffer;
 }
 
+void OfflineTtsImpl::InitTextNormalizer(const OfflineTtsConfig &config,
+                                        TextNormalizerList *tn_list) const {
+  if (!config.rule_fsts.empty()) {
+    std::vector<std::string> files = SplitStringAndTrim(config.rule_fsts, ',');
+    tn_list->reserve(files.size());
+    for (const auto &f : files) {
+      if (config.model.debug) {
+#if __OHOS__
+        SHERPA_ONNX_LOGE("rule fst: %{public}s", f.c_str());
+#else
+        SHERPA_ONNX_LOGE("rule fst: %s", f.c_str());
+#endif
+      }
+      tn_list->push_back(std::make_unique<kaldifst::TextNormalizer>(f));
+    }
+  }
+
+  if (!config.rule_fars.empty()) {
+    if (config.model.debug) {
+      SHERPA_ONNX_LOGE("Loading FST archives");
+    }
+    std::vector<std::string> files = SplitStringAndTrim(config.rule_fars, ',');
+
+    tn_list->reserve(files.size() + tn_list->size());
+
+    for (const auto &f : files) {
+      if (config.model.debug) {
+#if __OHOS__
+        SHERPA_ONNX_LOGE("rule far: %{public}s", f.c_str());
+#else
+        SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
+#endif
+      }
+      std::unique_ptr<fst::FarReader<fst::StdArc>> reader(
+          fst::FarReader<fst::StdArc>::Open(f));
+      for (; !reader->Done(); reader->Next()) {
+        std::unique_ptr<fst::StdConstFst> r(
+            fst::CastOrConvertToConstFst(reader->GetFst()->Copy()));
+
+        tn_list->push_back(
+            std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
+      }
+    }
+
+    if (config.model.debug) {
+      SHERPA_ONNX_LOGE("FST archives loaded!");
+    }
+  }
+}
+
+std::string OfflineTtsImpl::ApplyTextNormalizer(
+    std::string text, const TextNormalizerList &tn_list, bool debug) const {
+  for (const auto &tn : tn_list) {
+    text = tn->Normalize(text);
+    if (debug) {
+#if __OHOS__
+      SHERPA_ONNX_LOGE("After normalizing: %{public}s", text.c_str());
+#else
+      SHERPA_ONNX_LOGE("After normalizing: %s", text.c_str());
+#endif
+    }
+  }
+
+  return text;
+}
+
 std::unique_ptr<OfflineTtsImpl> OfflineTtsImpl::Create(
     const OfflineTtsConfig &config) {
   if (!config.model.vits.model.empty()) {
@@ -55,6 +126,8 @@ std::unique_ptr<OfflineTtsImpl> OfflineTtsImpl::Create(
     return std::make_unique<OfflineTtsPocketImpl>(config);
   } else if (!config.model.supertonic.tts_json.empty()) {
     return std::make_unique<OfflineTtsSupertonicImpl>(config);
+  } else if (!config.model.moss.prefill.empty()) {
+    return std::make_unique<OfflineTtsMossImpl>(config);
   }
 
   SHERPA_ONNX_LOGE("Please provide a tts model.");
@@ -80,6 +153,8 @@ std::unique_ptr<OfflineTtsImpl> OfflineTtsImpl::Create(
     return std::make_unique<OfflineTtsPocketImpl>(mgr, config);
   } else if (!config.model.supertonic.tts_json.empty()) {
     return std::make_unique<OfflineTtsSupertonicImpl>(mgr, config);
+  } else if (!config.model.moss.prefill.empty()) {
+    return std::make_unique<OfflineTtsMossImpl>(mgr, config);
   }
 
   SHERPA_ONNX_LOGE("Please provide a tts model.");

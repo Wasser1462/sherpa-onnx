@@ -220,6 +220,9 @@ if(SHERPA_ONNX_ENABLE_TTS)
   add_executable(supertonic-tts-en-cxx-api ./supertonic-tts-en-cxx-api.cc)
   target_link_libraries(supertonic-tts-en-cxx-api sherpa-onnx-cxx-api)
 
+  add_executable(moss-tts-cxx-api ./moss-tts-cxx-api.cc)
+  target_link_libraries(moss-tts-cxx-api sherpa-onnx-cxx-api)
+
   add_executable(zipvoice-tts-zh-en-cxx-api ./zipvoice-tts-zh-en-cxx-api.cc)
   target_link_libraries(zipvoice-tts-zh-en-cxx-api sherpa-onnx-cxx-api)
 endif()

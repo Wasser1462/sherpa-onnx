@@ -556,6 +556,15 @@ OfflineTts OfflineTts::Create(const OfflineTtsConfig &config) {
       config.model.supertonic.unicode_indexer.c_str();
   c.model.supertonic.voice_style = config.model.supertonic.voice_style.c_str();
 
+  c.model.moss.prefill = config.model.moss.prefill.c_str();
+  c.model.moss.decode_step = config.model.moss.decode_step.c_str();
+  c.model.moss.local_fixed_sampled_frame =
+      config.model.moss.local_fixed_sampled_frame.c_str();
+  c.model.moss.codec_encoder = config.model.moss.codec_encoder.c_str();
+  c.model.moss.codec_decoder = config.model.moss.codec_decoder.c_str();
+  c.model.moss.tokenizer_vocab = config.model.moss.tokenizer_vocab.c_str();
+  c.model.moss.tokenizer_scores = config.model.moss.tokenizer_scores.c_str();
+
   c.model.num_threads = config.model.num_threads;
   c.model.debug = config.model.debug;
   c.model.provider = config.model.provider.c_str();

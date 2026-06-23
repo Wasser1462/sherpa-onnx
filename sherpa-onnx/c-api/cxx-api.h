@@ -982,6 +982,24 @@ struct OfflineTtsSupertonicModelConfig {
   std::string voice_style;
 };
 
+/** @brief MOSS TTS model configuration. */
+struct OfflineTtsMossModelConfig {
+  /** Official `moss_tts_prefill.onnx`. */
+  std::string prefill;
+  /** Official `moss_tts_decode_step.onnx`. */
+  std::string decode_step;
+  /** Official `moss_tts_local_fixed_sampled_frame.onnx`. */
+  std::string local_fixed_sampled_frame;
+  /** Official audio tokenizer encoder model file. */
+  std::string codec_encoder;
+  /** Official audio tokenizer decode_full model file. */
+  std::string codec_decoder;
+  /** tokenizer_vocab.json. */
+  std::string tokenizer_vocab;
+  /** tokenizer_scores.json. */
+  std::string tokenizer_scores;
+};
+
 /**
  * @brief Model configuration for offline TTS.
  *
@@ -1003,6 +1021,8 @@ struct OfflineTtsModelConfig {
   OfflineTtsPocketModelConfig pocket;
   /** Supertonic configuration. */
   OfflineTtsSupertonicModelConfig supertonic;
+  /** MOSS configuration. */
+  OfflineTtsMossModelConfig moss;
 
   /** Number of inference threads. */
   int32_t num_threads = 1;

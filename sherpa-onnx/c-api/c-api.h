@@ -2347,12 +2347,30 @@ typedef struct SherpaOnnxOfflineTtsSupertonicModelConfig {
   const char *voice_style;
 } SherpaOnnxOfflineTtsSupertonicModelConfig;
 
+/** @brief Configuration for a MOSS TTS model. */
+typedef struct SherpaOnnxOfflineTtsMossModelConfig {
+  /** Path to `moss_tts_prefill.onnx`. */
+  const char *prefill;
+  /** Path to `moss_tts_decode_step.onnx`. */
+  const char *decode_step;
+  /** Path to `moss_tts_local_fixed_sampled_frame.onnx`. */
+  const char *local_fixed_sampled_frame;
+  /** Path to `moss_audio_tokenizer_encode.onnx`. */
+  const char *codec_encoder;
+  /** Path to `moss_audio_tokenizer_decode_full.onnx`. */
+  const char *codec_decoder;
+  /** Path to `tokenizer_vocab.json`. */
+  const char *tokenizer_vocab;
+  /** Path to `tokenizer_scores.json`. */
+  const char *tokenizer_scores;
+} SherpaOnnxOfflineTtsMossModelConfig;
+
 /**
  * @brief Configuration shared by offline TTS models.
  *
  * Exactly one TTS model family should be configured. For example, set only one
  * of @c vits, @c matcha, @c kokoro, @c kitten, @c zipvoice, @c pocket, or
- * @c supertonic.
+ * @c supertonic, or @c moss.
  *
  * If multiple model families are configured at the same time, the
  * implementation will choose one of them, and which one is used is
@@ -2363,6 +2381,7 @@ typedef struct SherpaOnnxOfflineTtsSupertonicModelConfig {
  * - `sherpa-onnx-pocket-tts-int8-2026-01-26`
  * - `matcha-icefall-en_US-ljspeech`
  * - `sherpa-onnx-zipvoice-distill-int8-zh-en-emilia`
+ * - `MOSS-TTS-Nano-100M-ONNX` plus `MOSS-Audio-Tokenizer-Nano-ONNX`
  */
 typedef struct SherpaOnnxOfflineTtsModelConfig {
   /** VITS configuration. */
@@ -2385,6 +2404,8 @@ typedef struct SherpaOnnxOfflineTtsModelConfig {
   SherpaOnnxOfflineTtsPocketModelConfig pocket;
   /** Supertonic configuration. */
   SherpaOnnxOfflineTtsSupertonicModelConfig supertonic;
+  /** MOSS configuration. */
+  SherpaOnnxOfflineTtsMossModelConfig moss;
 } SherpaOnnxOfflineTtsModelConfig;
 
 /**

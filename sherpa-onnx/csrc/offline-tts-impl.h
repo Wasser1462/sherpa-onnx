@@ -6,12 +6,18 @@
 #define SHERPA_ONNX_CSRC_OFFLINE_TTS_IMPL_H_
 
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "kaldifst/csrc/text-normalizer.h"
+#include "sherpa-onnx/csrc/file-utils.h"
+#include "sherpa-onnx/csrc/fst-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/offline-tts.h"
+#include "sherpa-onnx/csrc/text-utils.h"
 
 namespace sherpa_onnx {
 
@@ -59,7 +65,67 @@ class OfflineTtsImpl {
 
   std::vector<int64_t> AddBlank(const std::vector<int64_t> &x,
                                 int32_t blank_id = 0) const;
+
+ protected:
+  using TextNormalizerList =
+      std::vector<std::unique_ptr<kaldifst::TextNormalizer>>;
+
+  void InitTextNormalizer(const OfflineTtsConfig &config,
+                          TextNormalizerList *tn_list) const;
+
+  template <typename Manager>
+  void InitTextNormalizer(Manager *mgr, const OfflineTtsConfig &config,
+                          TextNormalizerList *tn_list) const;
+
+  std::string ApplyTextNormalizer(std::string text,
+                                  const TextNormalizerList &tn_list,
+                                  bool debug) const;
 };
+
+template <typename Manager>
+void OfflineTtsImpl::InitTextNormalizer(Manager *mgr,
+                                        const OfflineTtsConfig &config,
+                                        TextNormalizerList *tn_list) const {
+  if (!config.rule_fsts.empty()) {
+    std::vector<std::string> files = SplitStringAndTrim(config.rule_fsts, ',');
+    tn_list->reserve(files.size());
+    for (const auto &f : files) {
+      if (config.model.debug) {
+#if __OHOS__
+        SHERPA_ONNX_LOGE("rule fst: %{public}s", f.c_str());
+#else
+        SHERPA_ONNX_LOGE("rule fst: %s", f.c_str());
+#endif
+      }
+      auto buf = ReadFile(mgr, f);
+      std::istringstream is(std::string(buf.data(), buf.size()));
+      tn_list->push_back(std::make_unique<kaldifst::TextNormalizer>(is));
+    }
+  }
+
+  if (!config.rule_fars.empty()) {
+    std::vector<std::string> files = SplitStringAndTrim(config.rule_fars, ',');
+    tn_list->reserve(files.size() + tn_list->size());
+
+    for (const auto &f : files) {
+      if (config.model.debug) {
+#if __OHOS__
+        SHERPA_ONNX_LOGE("rule far: %{public}s", f.c_str());
+#else
+        SHERPA_ONNX_LOGE("rule far: %s", f.c_str());
+#endif
+      }
+
+      auto buf = ReadFile(mgr, f);
+
+      auto fsts = ReadFstsFromFar(buf);
+      for (auto &r : fsts) {
+        tn_list->push_back(
+            std::make_unique<kaldifst::TextNormalizer>(std::move(r)));
+      }
+    }
+  }
+}
 
 }  // namespace sherpa_onnx
 
