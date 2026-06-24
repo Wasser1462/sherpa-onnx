@@ -19,13 +19,13 @@ namespace sherpa_onnx {
 
 using json = nlohmann::json;
 
-static json LoadJsonString(const std::string &s, const char *name) {
-  if (s.empty()) {
+static json LoadJsonBuffer(const std::vector<char> &buf, const char *name) {
+  if (buf.empty()) {
     SHERPA_ONNX_LOGE("Empty %s json metadata", name);
     SHERPA_ONNX_EXIT(-1);
   }
 
-  return json::parse(s);
+  return json::parse(buf.begin(), buf.end());
 }
 
 // Special tokens that must be matched as atomic units
@@ -39,9 +39,10 @@ static constexpr int32_t kNumSpecialTokens =
 
 class OfflineTtsMossBpeTokenizer::Impl {
  public:
-  Impl(const std::string &vocab_json, const std::string &token_scores_json) {
-    Init(LoadJsonString(vocab_json, "tokenizer_vocab.json"),
-         LoadJsonString(token_scores_json, "tokenizer_scores.json"));
+  Impl(const std::vector<char> &vocab_json,
+       const std::vector<char> &token_scores_json) {
+    Init(LoadJsonBuffer(vocab_json, "tokenizer_vocab.json"),
+         LoadJsonBuffer(token_scores_json, "tokenizer_scores.json"));
   }
 
   std::vector<int32_t> Encode(const std::string &text) const {
@@ -57,6 +58,7 @@ class OfflineTtsMossBpeTokenizer::Impl {
 
     // Step 3: BPE encode each non-special segment
     std::vector<int32_t> ids;
+    ids.reserve(normalized.size());
     for (const auto &seg : segments) {
       if (seg.first) {
         // Special token
@@ -218,6 +220,7 @@ class OfflineTtsMossBpeTokenizer::Impl {
   void BpeEncode(const std::string &text, std::vector<int32_t> *ids) const {
     // Split into initial tokens (characters or byte fallback)
     std::vector<std::string> tokens;
+    tokens.reserve(text.size());
     const uint8_t *p = reinterpret_cast<const uint8_t *>(text.data());
     const uint8_t *end = p + text.size();
 
@@ -233,7 +236,7 @@ class OfflineTtsMossBpeTokenizer::Impl {
       }
 
       std::string ch(reinterpret_cast<const char *>(p), char_len);
-      if (token2id_.count(ch)) {
+      if (token2id_.find(ch) != token2id_.end()) {
         tokens.push_back(std::move(ch));
       } else {
         // Byte fallback
@@ -295,7 +298,8 @@ class OfflineTtsMossBpeTokenizer::Impl {
 };
 
 OfflineTtsMossBpeTokenizer::OfflineTtsMossBpeTokenizer(
-    const std::string &vocab_json, const std::string &token_scores_json)
+    const std::vector<char> &vocab_json,
+    const std::vector<char> &token_scores_json)
     : impl_(std::make_unique<Impl>(vocab_json, token_scores_json)) {}
 
 OfflineTtsMossBpeTokenizer::~OfflineTtsMossBpeTokenizer() = default;

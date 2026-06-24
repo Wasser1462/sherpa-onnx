@@ -14,8 +14,8 @@ namespace sherpa_onnx {
 
 class OfflineTtsMossBpeTokenizer {
  public:
-  OfflineTtsMossBpeTokenizer(const std::string &vocab_json,
-                             const std::string &token_scores_json);
+  OfflineTtsMossBpeTokenizer(const std::vector<char> &vocab_json,
+                             const std::vector<char> &token_scores_json);
 
   ~OfflineTtsMossBpeTokenizer();
 

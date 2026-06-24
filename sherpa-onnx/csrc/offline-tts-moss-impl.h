@@ -28,10 +28,6 @@ namespace sherpa_onnx {
 namespace {
 using json = nlohmann::json;
 
-static std::string ToString(const std::vector<char> &buf) {
-  return std::string(buf.data(), buf.size());
-}
-
 static json ParseJsonText(const std::string &s, const char *name) {
   try {
     return json::parse(s);
@@ -124,9 +120,15 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     }
     sentences = std::move(chunks);
 
-    std::vector<std::vector<int32_t>> prompt_audio_codes =
-        GetPromptAudioCodes(gen_config);
-    if (prompt_audio_codes.empty()) {
+    std::vector<std::vector<int32_t>> encoded_prompt_audio_codes;
+    const std::vector<std::vector<int32_t>> *prompt_audio_codes =
+        &prompt_data_.default_prompt_audio_codes;
+    if (!gen_config.reference_audio.empty()) {
+      encoded_prompt_audio_codes = EncodeReferenceAudio(gen_config);
+      prompt_audio_codes = &encoded_prompt_audio_codes;
+    }
+
+    if (prompt_audio_codes->empty()) {
       SHERPA_ONNX_LOGE("No MOSS prompt audio codes available");
       return {};
     }
@@ -148,7 +150,7 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
       }
 
       GeneratedAudio cur =
-          GenerateSingleSentence(sentences[i], gen_config, prompt_audio_codes,
+          GenerateSingleSentence(sentences[i], gen_config, *prompt_audio_codes,
                                  i, &should_continue, wrapped_cb);
 
       if (cur.samples.empty()) {
@@ -183,40 +185,25 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     std::vector<int32_t> user_prompt_prefix_token_ids;
     std::vector<int32_t> user_prompt_after_reference_token_ids;
     std::vector<int32_t> assistant_prompt_prefix_token_ids;
+    std::vector<int32_t> user_prompt_head_token_ids;
+    std::vector<int32_t> user_prompt_tail_prefix_token_ids;
+    std::vector<int32_t> user_prompt_tail_suffix_token_ids;
     std::vector<std::vector<int32_t>> default_prompt_audio_codes;
   };
 
   void InitTokenizer() {
     auto vocab_path = config_.model.moss.GetTokenizerVocabPath();
     auto scores_path = config_.model.moss.GetTokenizerScoresPath();
-    auto vocab_json = ToString(ReadFile(vocab_path));
-    auto scores_json = ToString(ReadFile(scores_path));
-    if (vocab_json.empty() || scores_json.empty()) {
-      SHERPA_ONNX_LOGE(
-          "MOSS tokenizer json is missing. Please check %s and %s.",
-          vocab_path.c_str(), scores_path.c_str());
-      SHERPA_ONNX_EXIT(-1);
-    }
-
-    tokenizer_ =
-        std::make_unique<OfflineTtsMossBpeTokenizer>(vocab_json, scores_json);
+    tokenizer_ = std::make_unique<OfflineTtsMossBpeTokenizer>(
+        ReadFile(vocab_path), ReadFile(scores_path));
   }
 
   template <typename Manager>
   void InitTokenizer(Manager *mgr) {
     auto vocab_path = config_.model.moss.GetTokenizerVocabPath();
     auto scores_path = config_.model.moss.GetTokenizerScoresPath();
-    auto vocab_json = ToString(ReadFile(mgr, vocab_path));
-    auto scores_json = ToString(ReadFile(mgr, scores_path));
-    if (vocab_json.empty() || scores_json.empty()) {
-      SHERPA_ONNX_LOGE(
-          "MOSS tokenizer json is missing. Please check %s and %s.",
-          vocab_path.c_str(), scores_path.c_str());
-      SHERPA_ONNX_EXIT(-1);
-    }
-
-    tokenizer_ =
-        std::make_unique<OfflineTtsMossBpeTokenizer>(vocab_json, scores_json);
+    tokenizer_ = std::make_unique<OfflineTtsMossBpeTokenizer>(
+        ReadFile(mgr, vocab_path), ReadFile(mgr, scores_path));
   }
 
   void InitPromptData() { InitPromptDataFromMetadata(); }
@@ -271,6 +258,26 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     prompt_data_.assistant_prompt_prefix_token_ids =
         JsonToIntVector(templates.at("assistant_prompt_prefix_token_ids"));
 
+    prompt_data_.user_prompt_head_token_ids =
+        prompt_data_.user_prompt_prefix_token_ids;
+    prompt_data_.user_prompt_head_token_ids.push_back(
+        prompt_data_.audio_start_token_id);
+
+    prompt_data_.user_prompt_tail_prefix_token_ids.clear();
+    prompt_data_.user_prompt_tail_prefix_token_ids.reserve(
+        1 + prompt_data_.user_prompt_after_reference_token_ids.size());
+    prompt_data_.user_prompt_tail_prefix_token_ids.push_back(
+        prompt_data_.audio_end_token_id);
+    prompt_data_.user_prompt_tail_prefix_token_ids.insert(
+        prompt_data_.user_prompt_tail_prefix_token_ids.end(),
+        prompt_data_.user_prompt_after_reference_token_ids.begin(),
+        prompt_data_.user_prompt_after_reference_token_ids.end());
+
+    prompt_data_.user_prompt_tail_suffix_token_ids =
+        prompt_data_.assistant_prompt_prefix_token_ids;
+    prompt_data_.user_prompt_tail_suffix_token_ids.push_back(
+        prompt_data_.audio_start_token_id);
+
     if (!generation_defaults_json.empty()) {
       const auto defaults = ParseJsonText(generation_defaults_json,
                                           "moss.generation_defaults_json");
@@ -300,15 +307,6 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     }
   }
 
-  std::vector<std::vector<int32_t>> GetPromptAudioCodes(
-      const GenerationConfig &gen_config) const {
-    if (!gen_config.reference_audio.empty()) {
-      return EncodeReferenceAudio(gen_config);
-    }
-
-    return prompt_data_.default_prompt_audio_codes;
-  }
-
   void AppendTextRows(const std::vector<int32_t> &tokens,
                       std::vector<int32_t> *input_data) const {
     for (int32_t token : tokens) {
@@ -325,17 +323,14 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     std::vector<int32_t> text_token_ids = tokenizer_->Encode(text);
 
     std::vector<int32_t> input_data;
-    input_data.reserve(
-        (text_token_ids.size() + prompt_audio_codes.size() + 128) *
-        prompt_data_.row_width);
+    size_t num_rows = prompt_data_.user_prompt_head_token_ids.size() +
+                      prompt_audio_codes.size() +
+                      prompt_data_.user_prompt_tail_prefix_token_ids.size() +
+                      text_token_ids.size() +
+                      prompt_data_.user_prompt_tail_suffix_token_ids.size();
+    input_data.reserve(num_rows * prompt_data_.row_width);
 
-    std::vector<int32_t> head;
-    head.reserve(2 + prompt_data_.user_prompt_prefix_token_ids.size());
-    head.push_back(prompt_data_.im_start_token_id);
-    head.insert(head.end(), prompt_data_.user_prompt_prefix_token_ids.begin(),
-                prompt_data_.user_prompt_prefix_token_ids.end());
-    head.push_back(prompt_data_.audio_start_token_id);
-    AppendTextRows(head, &input_data);
+    AppendTextRows(prompt_data_.user_prompt_head_token_ids, &input_data);
 
     for (const auto &frame : prompt_audio_codes) {
       if (static_cast<int32_t>(frame.size()) != prompt_data_.n_vq) {
@@ -351,20 +346,9 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
       std::copy(frame.begin(), frame.end(), input_data.begin() + old_size + 1);
     }
 
-    std::vector<int32_t> tail;
-    tail.reserve(2 + prompt_data_.user_prompt_after_reference_token_ids.size() +
-                 text_token_ids.size() +
-                 prompt_data_.assistant_prompt_prefix_token_ids.size());
-    tail.push_back(prompt_data_.audio_end_token_id);
-    tail.insert(tail.end(),
-                prompt_data_.user_prompt_after_reference_token_ids.begin(),
-                prompt_data_.user_prompt_after_reference_token_ids.end());
-    tail.insert(tail.end(), text_token_ids.begin(), text_token_ids.end());
-    tail.insert(tail.end(),
-                prompt_data_.assistant_prompt_prefix_token_ids.begin(),
-                prompt_data_.assistant_prompt_prefix_token_ids.end());
-    tail.push_back(prompt_data_.audio_start_token_id);
-    AppendTextRows(tail, &input_data);
+    AppendTextRows(prompt_data_.user_prompt_tail_prefix_token_ids, &input_data);
+    AppendTextRows(text_token_ids, &input_data);
+    AppendTextRows(prompt_data_.user_prompt_tail_suffix_token_ids, &input_data);
 
     int64_t seq_len =
         static_cast<int64_t>(input_data.size() / prompt_data_.row_width);
@@ -468,23 +452,18 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     return ans;
   }
 
-  std::vector<float> DecodeAudio(
-      const std::vector<std::vector<int32_t>> &audio_frames) const {
-    if (audio_frames.empty()) {
+  std::vector<float> DecodeAudio(const std::vector<int32_t> &audio_codes_data,
+                                 int32_t num_frames) const {
+    if (audio_codes_data.empty() || num_frames <= 0) {
       return {};
     }
 
-    int32_t num_frames = static_cast<int32_t>(audio_frames.size());
-    std::vector<int32_t> codes(num_frames * prompt_data_.n_vq);
-    for (int32_t t = 0; t < num_frames; ++t) {
-      if (static_cast<int32_t>(audio_frames[t].size()) != prompt_data_.n_vq) {
-        SHERPA_ONNX_LOGE("Expected %d audio codes per frame. Got %d",
-                         prompt_data_.n_vq,
-                         static_cast<int32_t>(audio_frames[t].size()));
-        return {};
-      }
-      std::copy(audio_frames[t].begin(), audio_frames[t].end(),
-                codes.begin() + t * prompt_data_.n_vq);
+    if (static_cast<int32_t>(audio_codes_data.size()) !=
+        num_frames * prompt_data_.n_vq) {
+      SHERPA_ONNX_LOGE("Expected %d audio codes. Got %d",
+                       num_frames * prompt_data_.n_vq,
+                       static_cast<int32_t>(audio_codes_data.size()));
+      return {};
     }
 
     auto memory_info =
@@ -494,8 +473,10 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
         1, static_cast<int64_t>(num_frames),
         static_cast<int64_t>(prompt_data_.n_vq)};
     Ort::Value audio_codes =
-        Ort::Value::CreateTensor(memory_info, codes.data(), codes.size(),
-                                 codes_shape.data(), codes_shape.size());
+        Ort::Value::CreateTensor(memory_info,
+                                 const_cast<int32_t *>(audio_codes_data.data()),
+                                 audio_codes_data.size(), codes_shape.data(),
+                                 codes_shape.size());
 
     std::array<int64_t, 1> len_shape = {1};
     int32_t code_length = num_frames;
@@ -526,29 +507,24 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     return mono;
   }
 
-  std::vector<float> ExtractLastHidden(Ort::Value *global_hidden) const {
+  Ort::Value CreateLastHiddenTensor(Ort::Value *global_hidden,
+                                    const Ort::MemoryInfo &memory_info) const {
     auto shape = global_hidden->GetTensorTypeAndShapeInfo().GetShape();
     int64_t seq_len = shape[1];
     int64_t hidden_size = shape[2];
     const float *p = global_hidden->GetTensorData<float>();
     p += (seq_len - 1) * hidden_size;
-    return {p, p + hidden_size};
+    std::array<int64_t, 2> hidden_shape = {1, hidden_size};
+    return Ort::Value::CreateTensor(
+        memory_info, const_cast<float *>(p), hidden_size, hidden_shape.data(),
+        hidden_shape.size());
   }
 
-  Ort::Value CreateHiddenTensor(std::vector<float> *hidden) const {
-    std::array<int64_t, 2> shape = {1, static_cast<int64_t>(hidden->size())};
-    auto memory_info =
-        Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
-    return Ort::Value::CreateTensor(memory_info, hidden->data(), hidden->size(),
-                                    shape.data(), shape.size());
-  }
-
-  Ort::Value CreateSeenMaskTensor(std::vector<int32_t> *seen_mask) const {
+  Ort::Value CreateSeenMaskTensor(std::vector<int32_t> *seen_mask,
+                                  const Ort::MemoryInfo &memory_info) const {
     std::array<int64_t, 3> shape = {
         1, static_cast<int64_t>(prompt_data_.n_vq),
         static_cast<int64_t>(prompt_data_.audio_codebook_size)};
-    auto memory_info =
-        Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
     return Ort::Value::CreateTensor(memory_info, seen_mask->data(),
                                     seen_mask->size(), shape.data(),
                                     shape.size());
@@ -566,7 +542,7 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
     MossGlobalOutput prefill =
         model_->RunPrefill(std::move(prompt.first), std::move(prompt.second));
 
-    std::vector<float> hidden = ExtractLastHidden(&prefill.global_hidden_state);
+    Ort::Value global_hidden_state = std::move(prefill.global_hidden_state);
     std::vector<Ort::Value> caches = std::move(prefill.present_kv);
     int32_t past_len = prompt_len;
 
@@ -590,32 +566,40 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
 
     std::vector<int32_t> seen_mask(
         prompt_data_.n_vq * prompt_data_.audio_codebook_size, 0);
-    std::vector<std::vector<int32_t>> generated_frames;
-    generated_frames.reserve(max_new_frames);
+    std::vector<int32_t> generated_codes;
+    generated_codes.reserve(max_new_frames * prompt_data_.n_vq);
 
     auto memory_info =
         Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+    std::array<float, 1> assistant_random = {0.0f};
+    std::vector<float> audio_random(prompt_data_.n_vq);
+    std::array<int64_t, 1> assistant_shape = {1};
+    std::array<int64_t, 2> audio_random_shape = {
+        1, static_cast<int64_t>(prompt_data_.n_vq)};
+    std::vector<int32_t> row(prompt_data_.row_width,
+                             prompt_data_.audio_pad_token_id);
+    row[0] = prompt_data_.audio_assistant_slot_token_id;
+    std::array<int64_t, 3> row_shape = {
+        1, 1, static_cast<int64_t>(prompt_data_.row_width)};
+    std::array<int64_t, 1> len_shape = {1};
 
     for (int32_t step = 0; step < max_new_frames && *should_continue; ++step) {
-      std::array<float, 1> assistant_random = {dist(gen)};
-      std::vector<float> audio_random(prompt_data_.n_vq);
+      assistant_random[0] = dist(gen);
       for (auto &v : audio_random) {
         v = dist(gen);
       }
 
-      std::array<int64_t, 1> assistant_shape = {1};
       Ort::Value assistant_random_u = Ort::Value::CreateTensor(
           memory_info, assistant_random.data(), assistant_random.size(),
           assistant_shape.data(), assistant_shape.size());
 
-      std::array<int64_t, 2> audio_random_shape = {
-          1, static_cast<int64_t>(prompt_data_.n_vq)};
       Ort::Value audio_random_u = Ort::Value::CreateTensor(
           memory_info, audio_random.data(), audio_random.size(),
           audio_random_shape.data(), audio_random_shape.size());
 
       MossSampledFrame sampled = model_->RunLocalFixedSampledFrame(
-          CreateHiddenTensor(&hidden), CreateSeenMaskTensor(&seen_mask),
+          CreateLastHiddenTensor(&global_hidden_state, memory_info),
+          CreateSeenMaskTensor(&seen_mask, memory_info),
           std::move(assistant_random_u), std::move(audio_random_u));
 
       if (!sampled.should_continue) {
@@ -629,7 +613,9 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
         break;
       }
 
-      generated_frames.push_back(sampled.frame_token_ids);
+      generated_codes.insert(generated_codes.end(),
+                             sampled.frame_token_ids.begin(),
+                             sampled.frame_token_ids.end());
       for (int32_t q = 0; q < prompt_data_.n_vq; ++q) {
         int32_t token = sampled.frame_token_ids[q];
         if (token >= 0 && token < prompt_data_.audio_codebook_size) {
@@ -641,30 +627,29 @@ class OfflineTtsMossImpl : public OfflineTtsImpl {
         break;
       }
 
-      std::vector<int32_t> row(prompt_data_.row_width,
-                               prompt_data_.audio_pad_token_id);
+      std::fill(row.begin(), row.end(), prompt_data_.audio_pad_token_id);
       row[0] = prompt_data_.audio_assistant_slot_token_id;
       std::copy(sampled.frame_token_ids.begin(), sampled.frame_token_ids.end(),
                 row.begin() + 1);
 
-      std::array<int64_t, 3> row_shape = {
-          1, 1, static_cast<int64_t>(prompt_data_.row_width)};
       Ort::Value input_ids =
           Ort::Value::CreateTensor(memory_info, row.data(), row.size(),
                                    row_shape.data(), row_shape.size());
 
-      std::array<int64_t, 1> len_shape = {1};
       Ort::Value past_valid_lengths = Ort::Value::CreateTensor(
           memory_info, &past_len, 1, len_shape.data(), len_shape.size());
 
       MossGlobalOutput decode = model_->RunDecodeStep(
           std::move(input_ids), std::move(past_valid_lengths), &caches);
-      hidden = ExtractLastHidden(&decode.global_hidden_state);
+      global_hidden_state = std::move(decode.global_hidden_state);
       caches = std::move(decode.present_kv);
       ++past_len;
     }
 
-    std::vector<float> audio = DecodeAudio(generated_frames);
+    int32_t num_generated_frames =
+        static_cast<int32_t>(generated_codes.size() / prompt_data_.n_vq);
+    std::vector<float> audio =
+        DecodeAudio(generated_codes, num_generated_frames);
     if (callback && !audio.empty()) {
       *should_continue = callback(audio.data(), audio.size(), 1.0f);
     }

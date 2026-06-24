@@ -73,6 +73,16 @@ def get_args():
         default=None,
         help="Optional int8 export directory. The ONNX files use *.int8.onnx names.",
     )
+    parser.add_argument(
+        "--external-data",
+        action="store_true",
+        help=(
+            "Keep the official ONNX external data layout instead of embedding "
+            "weights into every ONNX file. This is smaller and faster to load "
+            "from a filesystem; use the default single-file layout for asset "
+            "managers that cannot resolve external data files."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -118,6 +128,13 @@ def save_single_file_onnx(src: Path, dst: Path):
     onnx.save_model(model, str(dst), save_as_external_data=False)
 
 
+def copy_official_model_files(tts_dir: Path, codec_dir: Path, out_dir: Path):
+    for name in TTS_ONNX_FILES + TTS_EXTERNAL_DATA_FILES:
+        shutil.copy2(tts_dir / name, out_dir / name)
+    for name in CODEC_ONNX_FILES + CODEC_EXTERNAL_DATA_FILES:
+        shutil.copy2(codec_dir / name, out_dir / name)
+
+
 def add_metadata(prefill: Path, tts_dir: Path, codec_dir: Path):
     tts_meta = read_json(tts_dir / "tts_browser_onnx_meta.json")
     codec_meta = read_json(codec_dir / "codec_browser_onnx_meta.json")
@@ -149,16 +166,21 @@ def add_metadata(prefill: Path, tts_dir: Path, codec_dir: Path):
     onnx.save_model(model, str(prefill), save_as_external_data=False)
 
 
-def export_fp32(tts_dir: Path, codec_dir: Path, out_dir: Path):
+def export_fp32(
+    tts_dir: Path, codec_dir: Path, out_dir: Path, external_data: bool
+):
     tmp_dir = out_dir.with_name(out_dir.name + ".tmp")
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
 
-    for name in TTS_ONNX_FILES:
-        save_single_file_onnx(tts_dir / name, tmp_dir / name)
-    for name in CODEC_ONNX_FILES:
-        save_single_file_onnx(codec_dir / name, tmp_dir / name)
+    if external_data:
+        copy_official_model_files(tts_dir, codec_dir, tmp_dir)
+    else:
+        for name in TTS_ONNX_FILES:
+            save_single_file_onnx(tts_dir / name, tmp_dir / name)
+        for name in CODEC_ONNX_FILES:
+            save_single_file_onnx(codec_dir / name, tmp_dir / name)
 
     vocab, scores = load_sentencepiece(tts_dir / "tokenizer.model")
     (tmp_dir / "tokenizer_vocab.json").write_text(
@@ -223,7 +245,7 @@ def main():
         require_file(tts_dir / name)
     require_file(codec_dir / "codec_browser_onnx_meta.json")
 
-    export_fp32(tts_dir, codec_dir, out_dir)
+    export_fp32(tts_dir, codec_dir, out_dir, args.external_data)
 
     print(f"Exported FP32 MOSS TTS model to {out_dir}")
     print("Runtime files:")
@@ -232,6 +254,9 @@ def main():
     print("Extra files:")
     print("  tokenizer_vocab.json")
     print("  tokenizer_scores.json")
+    if args.external_data:
+        for name in TTS_EXTERNAL_DATA_FILES + CODEC_EXTERNAL_DATA_FILES:
+            print(f"  {name}")
 
     if args.int8_out_dir is not None:
         int8_out_dir = args.int8_out_dir.resolve()
